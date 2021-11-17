@@ -4,7 +4,12 @@ from xml.etree import ElementTree
 from progress.bar import IncrementalBar
 
 
-def parse_xml_file(filename: Path) -> dict:
+def parse_xml_file(filename: Path) -> list:
+    """
+    Parse from xml file bbox and class names of objects
+    :param filename:
+    :return:
+    """
 
     annotations = []
     tree = ElementTree.parse(filename)
@@ -51,4 +56,5 @@ def create_df_annotation(directory_annotation: str) -> None:
     dataframe.to_csv('annotation.csv')
 
 
-create_df_annotation(r'PASCAL VOC 2012/Annotations')
+if __name__ == '__main__':
+    create_df_annotation(r'PASCAL VOC 2012/Annotations')
