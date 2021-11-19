@@ -37,6 +37,7 @@ class RPN(nn.Module):
         return features, object_score, bbox_regression
 
 
+
 if __name__ == '__main__':
     dummy_input = torch.randn((1, 3, 800, 800))
     print(dummy_input.shape)
