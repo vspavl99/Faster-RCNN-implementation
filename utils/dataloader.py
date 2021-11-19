@@ -22,7 +22,7 @@ class ConfigDataset:
     )
 
 
-class ClassificationDataset(Dataset):
+class DatasetFasterRCNN(Dataset):
     def __init__(self, config_dataset: ConfigDataset, phase='train'):
 
         self.phase: str = phase
@@ -71,12 +71,12 @@ def get_dataloader(path_train_csv: Path, path_val_csv: Path, shuffle: bool, batc
     """
     dataloader = {
         'train': DataLoader(
-            dataset=ClassificationDataset(ConfigDataset(path_to_csv=path_train_csv), phase='train'),
+            dataset=DatasetFasterRCNN(ConfigDataset(path_to_csv=path_train_csv), phase='train'),
             batch_size=batch_size,
             shuffle=shuffle
         ),
         'val': DataLoader(
-            dataset=ClassificationDataset(ConfigDataset(path_to_csv=path_val_csv), phase='val'),
+            dataset=DatasetFasterRCNN(ConfigDataset(path_to_csv=path_val_csv), phase='val'),
             batch_size=batch_size,
             shuffle=shuffle
         )
