@@ -10,12 +10,15 @@ class RPN(nn.Module):
     def __init__(self):
         super(RPN, self).__init__()
 
-        self.anchors_number = 9
         self.anchors_sizes = (32, 64)
-        self.aspect_ratios = (1., 0.5)
+        self.aspect_ratios = ((0.5, 1.0,),)
+
+        self.anchors_number = len(self.anchors_sizes) * len(self.aspect_ratios)
 
         self.features_size = 512
         self.backbone = vgg16(pretrained=True).features
+
+        self.top_n_proposal = 100
 
         self.common_feature_extractor = nn.Sequential(
             nn.Conv2d(
@@ -33,7 +36,28 @@ class RPN(nn.Module):
             in_channels=self.features_size, out_channels=(4 * self.anchors_number), kernel_size=(1, 1)
         )
 
-        self.anchor_generator = AnchorGenerator(sizes=(self.anchors_sizes, ), aspect_ratios=self.aspect_ratios)
+        self.anchor_generator = AnchorGenerator(sizes=(self.anchors_sizes, ), aspect_ratios=(self.aspect_ratios,))
+
+    def filter_proposals(self, proposals, object_score):
+        """
+        Filtering porposals (clip)
+        :param proposals:
+        :param object_score:
+        :return:
+        """
+        batch_size = object_score.shape[0]
+        object_score = torch.reshape(object_score.detach().clone(), (batch_size, -1))
+
+        if self.top_n_proposal is not None:
+            top_n_proposal = min(self.top_n_proposal, proposals.shape[1])
+            _, keep_proposal_indexes = torch.topk(object_score, top_n_proposal, dim=1)
+
+            proposals = proposals[:, keep_proposal_indexes]
+            objectnesses_prob = object_score[torch.arange(batch_size)[:, None], keep_proposal_indexes]
+
+
+        return
+
 
     def forward(self, batch_images):
         # Feed input images into backbone network
@@ -49,14 +73,14 @@ class RPN(nn.Module):
         # Create anchors List[Tensor[self.anchors_number * w * h, 4], ... batch_size] (xyxy)
         anchors = self.anchor_generator(
             ImageList(batch_images, [image.shape for image in batch_images]),
-            feature_map
+            [feature_map]
         )
 
         # Convert bbox_regression from [batch_size, self.anchors_number * 4, w, h] to [batch_size, -1, 4]
         bbox_regression = torch.reshape(bbox_regression, (bbox_regression.shape[0], 4, -1)).permute((0, 2, 1))
         proposals = get_proposals_from_bbox_regression(bbox_regression, anchors)
 
-
+        filtered_proposals, filtered_object_score = self.filter_proposals(proposals, object_score)
 
         return feature_map, object_score, bbox_regression
 
@@ -94,8 +118,8 @@ def get_proposals_from_bbox_regression(bbox_shifts: Tensor, bbox: list[Tensor]) 
 
 
 if __name__ == '__main__':
-    dummy_input = torch.randn((1, 3, 800, 800))
-    print(dummy_input.shape)
+    dummy_input = torch.randn((2, 3, 800, 800))
+
     rpn = RPN()
     res = rpn(dummy_input)
     print(res[1].shape, res[2].shape)
