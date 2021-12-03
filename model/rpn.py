@@ -6,6 +6,7 @@ from torchvision.models.detection.image_list import ImageList
 from torchvision.ops import remove_small_boxes, clip_boxes_to_image, nms
 from torch import Tensor
 from utils.bbox_matcher import BBoxMatcher
+from utils.bbox import get_proposals_from_bbox_regression, get_target_shift
 
 
 class RPN(nn.Module):
@@ -13,8 +14,8 @@ class RPN(nn.Module):
         super(RPN, self).__init__()
 
         # Anchors parameters
-        self.anchors_sizes = (32, 64)
-        self.aspect_ratios = ((0.5, 1.0,),)
+        self.anchors_sizes = (32,)
+        self.aspect_ratios = ((1.0,),)
         self.anchors_number = len(self.anchors_sizes) * len(self.aspect_ratios)
         self.anchor_generator = AnchorGenerator(sizes=(self.anchors_sizes,), aspect_ratios=(self.aspect_ratios,))
 
@@ -120,57 +121,56 @@ class RPN(nn.Module):
         filtered_proposals, filtered_object_score = self.filter_proposals(proposals, object_score)
 
         if self.training_stage:
-            self.assign_targets_to_anchors(anchors, batch_targets)
+            assert batch_targets is not None
 
-        return feature_map, object_score, bbox_regression
+            labels, matched_gt_bboxes = self.assign_targets_to_anchors(anchors, batch_targets)
+            target_shift = get_target_shift(matched_gt_bboxes, anchors)
+            loss_object_score, loss_proposals = self.loss(
+                target_shift, labels, object_score, bbox_regression,
+            )
+        else:
+            loss_object_score, loss_proposals = None, None
 
-    def assign_targets_to_anchors(self, batch_anchors: list[Tensor], batch_ground_true_bboxes: list[Tensor]):
+        return feature_map, filtered_proposals, loss_object_score, loss_proposals
 
+    def assign_targets_to_anchors(
+            self, batch_anchors: list[Tensor], batch_ground_true_bboxes: list[Tensor]) -> tuple[list, list]:
+        """
+        For every proposals find ground_true_bboxes with highest IoU. And assigns labels them
+        :param batch_anchors: batch of anchors
+        :param batch_ground_true_bboxes: batch of ground_true_bboxes
+        :return: labels, ground_true_bbox_per_proposal
+        """
         assert len(batch_anchors) == len(batch_ground_true_bboxes)
-        # batch_size = len(batch_ground_true_bboxes)
 
-        matched_gt_bboxes_to_anchors = []
+        batch_matched_gt_bboxes_to_anchors = []
+        batch_labels = []
+
         for anchors, ground_true_bboxes in zip(batch_anchors, batch_ground_true_bboxes):
-            matched_indexes = self.bbox_matcher(anchors, ground_true_bboxes)
+            matched_indexes = self.bbox_matcher.match(anchors, ground_true_bboxes)
 
-            matched_gt_bboxes_to_anchors.append()
+            # Set 0 ground_true index for proposals with low IoU
+            matched_gt_bboxes_to_anchors = ground_true_bboxes[matched_indexes.clamp(min=0)]
 
+            labels = (matched_indexes >= 0).to(dtype=torch.float32)
 
-def get_proposals_from_bbox_regression(bbox_shifts: Tensor, bbox: list[Tensor]) -> Tensor:
-    """
-    Generate proposals from bbox and their shifts.
-    :param bbox_shifts: [batch_size, w * h * anchors_number, 4]
-    :param bbox: List[Tensor[self.anchors_number * w * h, 4], ... batch_size] (xyxy)
-    :return: torch.Tensor
-    """
+            # Negative examples
+            labels[matched_indexes == self.bbox_matcher.LOW_MARKER] = 0
 
-    bbox = torch.stack(bbox, dim=0)
+            # Between proposals
+            labels[matched_indexes == self.bbox_matcher.BETWEEN_MARKER] = -1
 
-    assert bbox.shape == bbox_shifts.shape
+            batch_labels.append(labels)
+            batch_matched_gt_bboxes_to_anchors.append(matched_gt_bboxes_to_anchors)
 
-    x_shift = bbox_shifts[:, :, 0]
-    y_shift = bbox_shifts[:, :, 1]
-    width_shift = bbox_shifts[:, :, 2]
-    height_shift = bbox_shifts[:, :, 3]
+        return batch_labels, batch_matched_gt_bboxes_to_anchors
 
-    bbox_x = bbox[:, :, 0]
-    bbox_y = bbox[:, :, 1]
-    bbox_width = bbox[:, :, 2]
-    bbox_height = bbox[:, :, 3]
-
-    proposals = torch.empty_like(bbox_shifts)
-
-    proposals[:, :, 0] = bbox_width * x_shift + bbox_x
-    proposals[:, :, 1] = bbox_height * y_shift + bbox_y
-    proposals[:, :, 2] = torch.exp(width_shift) * bbox_width
-    proposals[:, :, 3] = torch.exp(height_shift) * bbox_height
-
-    return proposals
-
+    def loss(self, target, labels, object_score, bbox_regression) -> tuple:
+        return (None, None)
 
 if __name__ == '__main__':
-    dummy_input = torch.randn((2, 3, 800, 800))
+    dummy_input = torch.randn((2, 3, 200, 200))
 
     rpn = RPN()
-    res = rpn(dummy_input)
+    res = rpn(dummy_input, torch.tensor([[[50, 50, 150, 150]], [[50, 50, 150, 150]]]))
     print(res[1].shape, res[2].shape)
