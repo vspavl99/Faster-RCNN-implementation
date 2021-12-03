@@ -7,8 +7,9 @@ from torchvision.ops import remove_small_boxes, clip_boxes_to_image, nms
 from torch import Tensor
 from utils.bbox_matcher import BBoxMatcher
 
+
 class RPN(nn.Module):
-    def __init__(self, stage):
+    def __init__(self, stage: str = 'train'):
         super(RPN, self).__init__()
 
         # Anchors parameters
@@ -133,7 +134,6 @@ class RPN(nn.Module):
             matched_indexes = self.bbox_matcher(anchors, ground_true_bboxes)
 
             matched_gt_bboxes_to_anchors.append()
-
 
 
 def get_proposals_from_bbox_regression(bbox_shifts: Tensor, bbox: list[Tensor]) -> Tensor:

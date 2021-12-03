@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from torchvision.models import vgg16
 from torchvision.ops import RoIPool
 
 
@@ -43,12 +42,4 @@ class FastRCNN(nn.Module):
 if __name__ == '__main__':
     dummy_input = torch.randn((1, 3, 800, 800)).resize(1, -1)
     print(dummy_input.shape)
-    res = rpn(dummy_input)
-    print(res[1].shape, res[2].shape)
 
-# class FasterRCNN(nn.Module):
-#     def __init__(self):
-#         super(FasterRCNN, self).__init__()
-#         self.
-#
-#     def forward(self, input):

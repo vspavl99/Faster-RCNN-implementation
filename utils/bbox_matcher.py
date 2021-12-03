@@ -1,6 +1,4 @@
-import torch
 from torch import Tensor
-from typing import List, Tuple
 from torchvision.ops import box_iou
 
 
