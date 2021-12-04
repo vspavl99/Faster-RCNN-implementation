@@ -1,5 +1,6 @@
 from torch import Tensor
 from torchvision.ops import box_iou
+from model.test import draw
 
 
 class BBoxMatcher:
@@ -13,8 +14,8 @@ class BBoxMatcher:
     def match(self, proposals: Tensor, ground_true_bboxes: Tensor):
         """
 
-        :param proposals:
-        :param ground_true_bboxes:
+        :param proposals: (xyxy)
+        :param ground_true_bboxes: must be in (xyxy)
         :return:
         """
 
@@ -23,6 +24,8 @@ class BBoxMatcher:
         # Find biggest IoU with ground_true_bbox for every proposals
         iou_values, gt_bbox_indexes = ious.max(dim=1)
 
+        # TODO: Debug draw remove
+        # draw(proposals, ground_true_bboxes)
         gt_bbox_indexes[iou_values < self.low_threshold] = self.LOW_MARKER
 
         gt_bbox_indexes[
