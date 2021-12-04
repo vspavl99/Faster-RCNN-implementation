@@ -4,8 +4,12 @@ from torchvision.models import vgg16
 from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.models.detection.image_list import ImageList
 from torchvision.ops import remove_small_boxes, clip_boxes_to_image, nms
+from torch.nn import SmoothL1Loss, BCEWithLogitsLoss
+from torch.nn import functional as F
+
 from torch import Tensor
 from utils.bbox_matcher import BBoxMatcher
+from utils.sampler import Sampler
 from utils.bbox import get_proposals_from_bbox_regression, get_target_shift
 
 
@@ -50,7 +54,8 @@ class RPN(nn.Module):
 
         # Training
         self.training_stage = True if stage == 'train' else False
-        self.bbox_matcher = BBoxMatcher()
+        self.bbox_matcher = BBoxMatcher(0.1, 0.01)
+        self.sampler = Sampler()
 
     def filter_proposals(self, proposals, object_score):
         """
@@ -97,42 +102,6 @@ class RPN(nn.Module):
 
         return final_proposals, final_score
 
-    def forward(self, batch_images, batch_targets=None):
-        # Feed input images into backbone network
-        feature_map = self.backbone(batch_images)
-
-        # Feed feature_map into Conv2d and ReLU
-        feature_map = self.common_feature_extractor(feature_map)
-
-        # Feed feature_map into two branches for bbox_regression and object_score
-        # [Batch_size, self.anchors_number * k, w, h]
-        object_score, bbox_regression = self.object_score(feature_map), self.bbox_regression(feature_map)
-
-        # Create anchors List[Tensor[self.anchors_number * w * h, 4], ... batch_size] (xyxy)
-        anchors = self.anchor_generator(
-            ImageList(batch_images, [image.shape for image in batch_images]),
-            [feature_map]
-        )
-
-        # Convert bbox_regression from [batch_size, self.anchors_number * 4, w, h] to [batch_size, -1, 4]
-        bbox_regression = torch.reshape(bbox_regression, (bbox_regression.shape[0], 4, -1)).permute((0, 2, 1))
-        proposals = get_proposals_from_bbox_regression(bbox_regression, anchors)
-
-        filtered_proposals, filtered_object_score = self.filter_proposals(proposals, object_score)
-
-        if self.training_stage:
-            assert batch_targets is not None
-
-            labels, matched_gt_bboxes = self.assign_targets_to_anchors(anchors, batch_targets)
-            target_shift = get_target_shift(matched_gt_bboxes, anchors)
-            loss_object_score, loss_proposals = self.loss(
-                target_shift, labels, object_score, bbox_regression,
-            )
-        else:
-            loss_object_score, loss_proposals = None, None
-
-        return feature_map, filtered_proposals, loss_object_score, loss_proposals
-
     def assign_targets_to_anchors(
             self, batch_anchors: list[Tensor], batch_ground_true_bboxes: list[Tensor]) -> tuple[list, list]:
         """
@@ -165,12 +134,90 @@ class RPN(nn.Module):
 
         return batch_labels, batch_matched_gt_bboxes_to_anchors
 
-    def loss(self, target, labels, object_score, bbox_regression) -> tuple:
-        return (None, None)
+    def forward(self, batch_images, batch_targets=None):
+        # Feed input images into backbone network
+        feature_map = self.backbone(batch_images)
+
+        # Feed feature_map into Conv2d and ReLU
+        feature_map = self.common_feature_extractor(feature_map)
+
+        # Feed feature_map into two branches for bbox_regression and object_score
+        # [Batch_size, self.anchors_number * k, w, h]
+        object_score, bbox_regression = self.object_score(feature_map), self.bbox_regression(feature_map)
+
+        # Create anchors List[Tensor[self.anchors_number * w * h, 4], ... batch_size] (xyxy)
+        anchors = self.anchor_generator(
+            ImageList(batch_images, [image.shape for image in batch_images]),
+            [feature_map]
+        )
+
+        # Convert bbox_regression from [batch_size, self.anchors_number * 4, w, h] to [batch_size, -1, 4]
+        bbox_regression = torch.reshape(bbox_regression, (bbox_regression.shape[0], 4, -1)).permute((0, 2, 1))
+        proposals = get_proposals_from_bbox_regression(bbox_regression, anchors)
+
+        filtered_proposals, filtered_object_score = self.filter_proposals(proposals, object_score)
+
+        if self.training_stage:
+            assert batch_targets is not None
+
+            labels, matched_gt_bboxes = self.assign_targets_to_anchors(anchors, batch_targets)
+            target_shift = get_target_shift(matched_gt_bboxes, anchors)
+            loss_object_score, loss_proposals = self.loss(
+                target_shift, labels, object_score, bbox_regression,
+            )
+
+        else:
+            loss_object_score, loss_proposals = None, None
+
+        return feature_map, filtered_proposals, loss_object_score, loss_proposals
+
+    def loss(self, target: Tensor, labels: list[Tensor], object_score: Tensor, bbox_regression: Tensor) -> tuple:
+        """
+        Take mini-batch of anchors and compute loss for them
+        :param target:
+        :param labels:
+        :param object_score:
+        :param bbox_regression:
+        :return:
+        """
+        positive_samples, negative_samples, samples = self.sampler.create_minibatch(labels)
+
+        #  samples = indexes per every batch
+        object_score_minibatch = [
+            object_score.reshape(2, -1)[batch_number, indexes] for batch_number, indexes in enumerate(samples)
+        ]
+        labels_minibatch = [
+            labels[batch_number][indexes] for batch_number, indexes in enumerate(samples)
+        ]
+
+        bbox_regression_minibatch = [
+            bbox_regression[batch_number, indexes, :] for batch_number, indexes in enumerate(samples)
+        ]
+        target_regression_minibatch = [
+            target[batch_number, indexes, :] for batch_number, indexes in enumerate(samples)
+        ]
+
+        # Convert all list of Tensors into Tensors
+        object_score_minibatch = torch.cat(object_score_minibatch, dim=0)
+        labels_minibatch = torch.cat(labels_minibatch, dim=0)
+
+        target_regression_minibatch = torch.cat(target_regression_minibatch, dim=0)
+        bbox_regression_minibatch = torch.cat(bbox_regression_minibatch, dim=0)
+
+        box_loss = F.smooth_l1_loss(
+            bbox_regression_minibatch, target_regression_minibatch, reduction='sum'
+        )
+
+        objectness_loss = F.binary_cross_entropy_with_logits(
+            object_score_minibatch, labels_minibatch, reduction='mean'
+        )
+
+        return box_loss, objectness_loss
+
 
 if __name__ == '__main__':
     dummy_input = torch.randn((2, 3, 200, 200))
 
     rpn = RPN()
     res = rpn(dummy_input, torch.tensor([[[50, 50, 150, 150]], [[50, 50, 150, 150]]]))
-    print(res[1].shape, res[2].shape)
+    print(res[0].shape, len(res[1]), res[1][0].shape, res[2], res[3])

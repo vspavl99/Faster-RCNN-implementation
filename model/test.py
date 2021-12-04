@@ -6,6 +6,31 @@ from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.models.detection.image_list import ImageList
 
 
+def draw(proposals, ground_true_bboxes):
+    import torch
+    import cv2
+    import numpy as np
+    dummy_image = np.array(torch.ones(200, 200, 3, dtype=torch.uint8))
+
+    for i, anchor in enumerate(proposals):
+        x1, y1, x2, y2 = int(anchor[0].item()), int(anchor[1].item()), int(anchor[2].item()), int(anchor[3].item())
+        print(x1, y1, x2, y2)
+
+        image = cv2.rectangle(img=dummy_image, pt1=(x1, y1), pt2=(x2, y2), color=(255, 0, 255))
+        # break
+
+    for i, anchor in enumerate(ground_true_bboxes):
+        x1, y1, x2, y2 = int(anchor[0].item()), int(anchor[1].item()), int(anchor[2].item()), int(anchor[3].item())
+        print(x1, y1, x2, y2)
+
+        image = cv2.rectangle(img=dummy_image, pt1=(x1, y1), pt2=(x2, y2), color=(0, 255, 0))
+        # break
+
+    import matplotlib.pyplot as plt
+    plt.imshow(dummy_image)
+    plt.show()
+
+
 def decom_vgg16():
     # the 30th layer of features is relu of conv5_3
 
