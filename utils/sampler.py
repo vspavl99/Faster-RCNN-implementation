@@ -36,6 +36,7 @@ class Sampler:
             negative_sample[negative_indexes] = 1
             batch_negative_samples.append(negative_sample)
 
+            # TODO: choose implementation
             #######
             mini_batch_samples = torch.where(negative_sample | positive_sample)[0]
             batch_samples.append(mini_batch_samples)

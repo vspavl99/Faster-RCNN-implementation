@@ -10,16 +10,17 @@ def draw(proposals, ground_true_bboxes):
     import torch
     import cv2
     import numpy as np
-    dummy_image = np.array(torch.ones(200, 200, 3, dtype=torch.uint8))
+    dummy_image = np.array(torch.ones(800, 800, 3, dtype=torch.uint8))
 
-    for i, anchor in enumerate(proposals):
+
+    for i, anchor in enumerate(proposals[0]):
         x1, y1, x2, y2 = int(anchor[0].item()), int(anchor[1].item()), int(anchor[2].item()), int(anchor[3].item())
         print(x1, y1, x2, y2)
 
         image = cv2.rectangle(img=dummy_image, pt1=(x1, y1), pt2=(x2, y2), color=(255, 0, 255))
         # break
 
-    for i, anchor in enumerate(ground_true_bboxes):
+    for i, anchor in enumerate(ground_true_bboxes[0]):
         x1, y1, x2, y2 = int(anchor[0].item()), int(anchor[1].item()), int(anchor[2].item()), int(anchor[3].item())
         print(x1, y1, x2, y2)
 
@@ -78,6 +79,29 @@ def read_image():
     image = image.permute(2, 0, 1).unsqueeze(0).divide(255)
     print(image.shape, )
     return image
+
+
+def train_rpn():
+    from model.rpn import RPN
+
+    rpn = RPN()
+
+    optimizer = torch.optim.Adam(rpn.parameters())
+
+    for i in range(100):
+        dummy_input = torch.ones((2, 3, 800, 800))
+
+        feature_map, proposals, loss_object_score, loss_bbox = rpn(
+            dummy_input, torch.tensor([[[50, 50, 150, 150]], [[50, 50, 150, 150]]])
+        )
+        loss = loss_object_score + loss_bbox
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        print(loss)
+        if i % 10 == 0:
+            draw(proposals, torch.tensor([[[50, 50, 150, 150]]]))
 
 
 if __name__ == '__main__':

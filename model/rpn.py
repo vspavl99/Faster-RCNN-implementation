@@ -47,8 +47,8 @@ class RPN(nn.Module):
         # FilterProposals
         self.min_boxes_size = 1e-3
         self.min_box_score = 0.0
-        self.post_nms_top_n_proposal = 2000
-        self.pre_nms_top_n_proposal = 2000
+        self.post_nms_top_n_proposal = 500
+        self.pre_nms_top_n_proposal = 500
         self.nms_threshold = 0.7
         self.image_size = (800, 800)
 
@@ -180,11 +180,12 @@ class RPN(nn.Module):
         :param bbox_regression:
         :return:
         """
+        batch_size = len(object_score)
         positive_samples, negative_samples, samples = self.sampler.create_minibatch(labels)
 
         #  samples = indexes per every batch
         object_score_minibatch = [
-            object_score.reshape(2, -1)[batch_number, indexes] for batch_number, indexes in enumerate(samples)
+            object_score.reshape(batch_size, -1)[batch_number, indexes] for batch_number, indexes in enumerate(samples)
         ]
         labels_minibatch = [
             labels[batch_number][indexes] for batch_number, indexes in enumerate(samples)
