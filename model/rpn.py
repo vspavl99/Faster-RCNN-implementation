@@ -77,7 +77,7 @@ class RPN(nn.Module):
 
         object_prob = torch.sigmoid(object_score)
 
-        # proposals = clip_boxes_to_image(proposals, self.image_size)
+        proposals = clip_boxes_to_image(proposals, self.image_size)
 
         final_proposals, final_score = [], []
         for batch_proposals, batch_scores in zip(proposals, object_prob):
@@ -183,6 +183,14 @@ class RPN(nn.Module):
         batch_size = len(object_score)
         positive_samples, negative_samples, samples = self.sampler.create_minibatch(labels)
 
+        # TODO: choose implementation
+        # flatten indexes per all batch in flatten
+        # sampled_pos_inds = torch.where(torch.cat(positive_samples, dim=0))[0]
+        # sampled_neg_inds = torch.where(torch.cat(negative_samples, dim=0))[0]
+        # sampled_inds = torch.cat([sampled_pos_inds, sampled_neg_inds], dim=0) # flatten indexes
+        # objectness = object_score.flatten()
+        # tmp3 = objectness[sampled_inds]
+
         #  samples = indexes per every batch
         object_score_minibatch = [
             object_score.reshape(batch_size, -1)[batch_number, indexes] for batch_number, indexes in enumerate(samples)
@@ -217,7 +225,7 @@ class RPN(nn.Module):
 
 
 if __name__ == '__main__':
-    dummy_input = torch.randn((2, 3, 200, 200))
+    dummy_input = torch.randn((2, 3, 664, 664))
 
     rpn = RPN()
     res = rpn(dummy_input, torch.tensor([[[50, 50, 150, 150]], [[50, 50, 150, 150]]]))
