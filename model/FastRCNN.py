@@ -201,6 +201,7 @@ class FastRCNN(nn.Module):
         """
         device = features_class.device
 
+        #TODO: don't work
         predicted_bboxes = get_proposals_from_bbox_regression(features_scores, batch_proposals)
 
         proposals_per_image = [proposals_per_image.shape[0] for proposals_per_image in batch_proposals]

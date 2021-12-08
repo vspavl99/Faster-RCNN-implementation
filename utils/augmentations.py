@@ -3,7 +3,7 @@ from albumentations.pytorch.transforms import ToTensorV2
 
 from albumentations import Resize, ShiftScaleRotate, HorizontalFlip, \
     ElasticTransform, GridDistortion, CoarseDropout, CLAHE, RandomBrightnessContrast, \
-    RandomGamma, IAASharpen, Blur, MotionBlur, OneOf, Compose
+    RandomGamma, IAASharpen, Blur, MotionBlur, OneOf, Compose, BboxParams
 
 
 def get_augmentations(phase: str, image_shape: tuple) -> Compose:
@@ -15,14 +15,6 @@ def get_augmentations(phase: str, image_shape: tuple) -> Compose:
     """
     list_transforms = []
 
-    list_transforms.extend(
-        [
-            Resize(image_shape[0], image_shape[1]),
-            # Normalize(mean=(69.0932, 69.3587, 68.9373), std=(48.4471, 48.4580, 48.,4263)),
-            ToTensorV2()
-        ]
-    )
-
     if phase == 'train':
         list_transforms.extend(
             [
@@ -32,18 +24,6 @@ def get_augmentations(phase: str, image_shape: tuple) -> Compose:
                 ),
 
                 HorizontalFlip(),
-
-                ElasticTransform(
-                    p=1.0, alpha=1.4, sigma=13, alpha_affine=7, interpolation=0, border_mode=1, approximate=False
-                ),
-
-                GridDistortion(
-                    p=0.8, num_steps=5, distort_limit=(-0.50, 0.5), interpolation=0, border_mode=1
-                ),
-
-                CoarseDropout(
-                    p=1.0, max_holes=14, max_height=8, max_width=8, min_holes=8, min_height=8, min_width=8
-                ),
 
                 OneOf(
                     [
@@ -65,5 +45,13 @@ def get_augmentations(phase: str, image_shape: tuple) -> Compose:
             ]
         )
 
-    list_transforms = Compose(list_transforms)
+    list_transforms.extend(
+        [
+            Resize(image_shape[0], image_shape[1]),
+            # Normalize(mean=(69.0932, 69.3587, 68.9373), std=(48.4471, 48.4580, 48.,4263)),
+            ToTensorV2()
+        ]
+    )
+
+    list_transforms = Compose(list_transforms, bbox_params=BboxParams(format='pascal_voc', label_fields=['class_labels']))
     return list_transforms
