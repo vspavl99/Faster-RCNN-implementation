@@ -6,6 +6,7 @@ from utils.bbox_matcher import BBoxMatcher
 from utils.sampler import Sampler
 from utils.bbox import get_proposals_from_bbox_regression, get_target_shift
 from torch.nn import functional as F
+from torchvision.ops import clip_boxes_to_image, remove_small_boxes, batched_nms
 
 
 class FastRCNN(nn.Module):
@@ -13,17 +14,23 @@ class FastRCNN(nn.Module):
         super().__init__()
 
         self.n_class = 20
+        self.spatial_scale = 1 / 32
+        self.roi_pooling_size = 7
+        self.feature_map_size = 512
+        self.score_thresh = 0.1
+        self.nms_thresh = 0.3
+        self.detections_per_img = 100
 
-        self.roi_pooling = RoIPool(output_size=(3, 3), spatial_scale=1 / 32)
+        self.roi_pooling = RoIPool(output_size=self.roi_pooling_size, spatial_scale=self.spatial_scale )
 
         self.fc = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(in_features=9 * 512, out_features=1024, bias=True),
+            nn.Linear(in_features=self.feature_map_size * self.roi_pooling_size ** 2, out_features=1024, bias=True),
             nn.ReLU(),
             nn.Dropout(p=0.1),
             nn.Linear(in_features=1024, out_features=1024, bias=True),
             nn.ReLU(),
-            nn.Dropout(p=0.5)
+            nn.Dropout(p=0.1)
         )
 
         self.fc_objects = nn.Linear(1024, self.n_class)
@@ -32,11 +39,12 @@ class FastRCNN(nn.Module):
         self.bbox_matcher = BBoxMatcher()
         self.sampler = Sampler()
 
-        self.training_stage = True if stage == 'train' else False
+        self.training = True if stage == 'train' else False
 
     def forward(self, feature_map: Tensor, proposals: list[Tensor], targets: list[dict]):
         labels = None
         regression_targets = None
+        original_image_shape = feature_map.shape[1] // self.spatial_scale,  feature_map.shape[2] // self.spatial_scale
 
         if self.training:
             gt_boxes = [t["boxes"] for t in targets]
@@ -65,21 +73,22 @@ class FastRCNN(nn.Module):
         if self.training:
             assert labels is not None and regression_targets is not None
             loss_classifier, loss_box_reg = self.loss(features_class, features_scores, labels, regression_targets)
-            losses = {"loss_classifier": loss_classifier, "loss_box_reg": loss_box_reg}
+            losses = {"fastrcnn_loss_classifier": loss_classifier, "fastrcnn_loss_box_reg": loss_box_reg}
 
         else:
-
-            boxes, scores, labels = self.postprocess_detections(features_class, features_scores, proposals, image_shapes)
+            boxes, scores, labels = self.postprocess_detections(
+                features_class, features_scores, proposals, original_image_shape
+            )
             for boxes_per_image, scores_per_image, labels_per_image in zip(boxes, scores, labels):
                 result.append({"boxes": boxes_per_image, "labels": scores_per_image, "scores": labels_per_image})
 
         return result, losses
 
-    def loss(self, features_class: Tensor, features_scores: Tensor, batch_labels: list[Tensor],
+    @staticmethod
+    def loss(features_class: Tensor, features_scores: Tensor, batch_labels: list[Tensor],
              regression_targets: Tensor) -> tuple:
         """
-
-        :param features_class:
+        :param features_class: # TODO:
         :param features_scores:
         :param batch_labels:
         :param regression_targets:
@@ -87,16 +96,15 @@ class FastRCNN(nn.Module):
         """
 
         labels = torch.cat(batch_labels, dim=0)
-        regression_targets = regression_targets.reshape(-1, 4)
-
         classification_loss = F.cross_entropy(features_class, labels)
 
         positive_indexes = torch.where(labels > 0)[0]
         labels_pos = labels[positive_indexes]
-        features_scores = features_scores.reshape(features_scores.shape[0], -1, 4)
 
+        regression_targets = regression_targets.reshape(-1, 4)
         regression_targets_positive = regression_targets[positive_indexes]
-        # features_scores
+
+        features_scores = features_scores.reshape(features_scores.shape[0], -1, 4)
 
         regression_loss = F.smooth_l1_loss(
             features_scores[positive_indexes, labels_pos],
@@ -181,3 +189,95 @@ class FastRCNN(nn.Module):
             batch_matched_indexes.append(clamped_matched_idxs_in_image)
 
         return batch_labels, batch_matched_indexes
+
+    def postprocess_detections(self, features_class: Tensor, features_scores: Tensor,
+                               batch_proposals: list[Tensor], image_shape: tuple):
+        """
+        :param features_class:
+        :param features_scores:
+        :param proposals:
+        :param image_shape:
+        :return:
+        """
+        device = features_class.device
+
+        predicted_bboxes = get_proposals_from_bbox_regression(features_scores, batch_proposals)
+
+        proposals_per_image = [proposals_per_image.shape[0] for proposals_per_image in batch_proposals]
+        predicted_bboxes = predicted_bboxes.split(proposals_per_image, 0)
+
+        predicted_scores = F.softmax(features_class, -1)
+        predicted_scores = predicted_scores.split(proposals_per_image, 0)
+
+        all_boxes = []
+        all_scores = []
+        all_labels = []
+        for boxes, scores in zip(predicted_bboxes, predicted_scores):
+            boxes = clip_boxes_to_image(boxes, image_shape)
+
+            # create labels for each prediction
+            labels = torch.arange(self.n_class, device=device)
+            labels = labels.view(1, -1).expand_as(scores)
+
+            # remove predictions with the background label
+            boxes = boxes[:, 1:]
+            scores = scores[:, 1:]
+            labels = labels[:, 1:]
+
+            # batch everything, by making every class prediction be a separate instance
+            boxes = boxes.reshape(-1, 4)
+            scores = scores.reshape(-1)
+            labels = labels.reshape(-1)
+
+            # remove low scoring boxes
+            inds = torch.where(scores > self.score_thresh)[0]
+            boxes, scores, labels = boxes[inds], scores[inds], labels[inds]
+
+            # remove empty boxes
+            keep = remove_small_boxes(boxes, min_size=1e-2)
+            boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
+
+            # non-maximum suppression, independently done per class
+            keep = batched_nms(boxes, scores, labels, self.nms_thresh)
+            # keep only topk scoring predictions
+            keep = keep[:self.detections_per_img]
+            boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
+
+            all_boxes.append(boxes)
+            all_scores.append(scores)
+            all_labels.append(labels)
+
+        return all_boxes, all_scores, all_labels
+
+
+if __name__ == '__main__':
+    dummy_input = torch.randn((2, 3, 200, 200))
+
+    from torchvision.models import vgg16
+    from model.rpn import RPN
+    rpn = RPN(stage='val')
+    feature_map, filtered_proposals, loss_object_score, loss_proposals = rpn(dummy_input)
+
+    fast_rcnn = FastRCNN()
+    targets = [
+            {'boxes': torch.tensor([[50, 50, 150, 150]]), 'labels': torch.tensor([0])},
+            {'boxes': torch.tensor([[50, 50, 150, 150]]), 'labels': torch.tensor([0])}
+        ]
+    output = fast_rcnn(feature_map, filtered_proposals, targets)
+
+    print(dummy_input.shape)
+
+    from model.rpn import RPN
+    rpn = RPN()
+    optimizer = torch.optim.Adam(rpn.parameters())
+
+    for i in range(100):
+        dummy_input = torch.ones((2, 3, 800, 800))
+
+        feature_map, proposals, loss_object_score, loss_bbox = rpn(
+            dummy_input, torch.tensor([[[50, 50, 150, 150]], [[50, 50, 150, 150]]])
+        )
+        loss = loss_object_score + loss_bbox
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()

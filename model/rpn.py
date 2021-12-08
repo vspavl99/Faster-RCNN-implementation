@@ -53,7 +53,7 @@ class RPN(nn.Module):
         self.image_size = (800, 800)
 
         # Training
-        self.training_stage = True if stage == 'train' else False
+        self.training = True if stage == 'train' else False
         self.bbox_matcher = BBoxMatcher(0.1, 0.01)
         self.sampler = Sampler()
 
@@ -157,7 +157,8 @@ class RPN(nn.Module):
 
         filtered_proposals, filtered_object_score = self.filter_proposals(proposals, object_score)
 
-        if self.training_stage:
+        losses = {}
+        if self.training:
             assert batch_targets is not None
 
             labels, matched_gt_bboxes = self.assign_targets_to_anchors(anchors, batch_targets)
@@ -165,11 +166,12 @@ class RPN(nn.Module):
             loss_object_score, loss_proposals = self.loss(
                 target_shift, labels, object_score, bbox_regression,
             )
+            losses = {"rpn_loss_object_score": loss_object_score, "rpn_loss_proposals": loss_proposals}
 
         else:
-            loss_object_score, loss_proposals = None, None
+            loss_object_score, loss_proposals, loss_overall = None, None, None
 
-        return feature_map, filtered_proposals, loss_object_score, loss_proposals
+        return feature_map, filtered_proposals, losses
 
     def loss(self, target: Tensor, labels: list[Tensor], object_score: Tensor, bbox_regression: Tensor) -> tuple:
         """
