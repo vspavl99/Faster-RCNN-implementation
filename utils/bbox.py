@@ -1,9 +1,9 @@
 import torch
 from torch import Tensor
 from torchvision.ops import box_convert
+from typing import List
 
-
-def get_target_shift(bboxes, anchors) -> Tensor:
+def get_target_shift(bboxes, anchors) -> List[Tensor]:
     """
     Calculate and return target shift for each proposals
     :param bboxes: true boxes for every anchors
@@ -26,17 +26,18 @@ def get_target_shift(bboxes, anchors) -> Tensor:
     # targets_dw = torch.log(gt_widths / anchor_widths)
     # targets_dh = torch.log(gt_heights / anchor_heights)
 
-    bboxes = torch.stack(bboxes, dim=0)
-    anchors = torch.stack(anchors, dim=0)
+    targets = []
+    for boxes_per_image, anchor_per_image in zip(bboxes, anchors):
 
-    bboxes = box_convert(bboxes, 'xyxy', out_fmt='cxcywh')
-    anchors = box_convert(anchors, 'xyxy', out_fmt='cxcywh')
+        boxes_per_image = box_convert(boxes_per_image, 'xyxy', out_fmt='cxcywh')
+        anchor_per_image = box_convert(anchor_per_image, 'xyxy', out_fmt='cxcywh')
 
-    targets = torch.empty_like(anchors)
-    targets[:, :, 0] = (bboxes[:, :, 0] - anchors[:, :, 0]) / anchors[:, :, 2]
-    targets[:, :, 1] = (bboxes[:, :, 1] - anchors[:, :, 1]) / anchors[:, :, 3]
-    targets[:, :, 2] = torch.log(bboxes[:, :, 2] / anchors[:, :, 2])
-    targets[:, :, 3] = torch.log(bboxes[:, :, 3] / anchors[:, :, 3])
+        targets_per_image = torch.empty_like(anchor_per_image)
+        targets_per_image[:, 0] = (boxes_per_image[:, 0] - anchor_per_image[:, 0]) / anchor_per_image[:, 2]
+        targets_per_image[:, 1] = (boxes_per_image[:, 1] - anchor_per_image[:, 1]) / anchor_per_image[:, 3]
+        targets_per_image[:, 2] = torch.log(boxes_per_image[:, 2] / anchor_per_image[:, 2])
+        targets_per_image[:, 3] = torch.log(boxes_per_image[:, 3] / anchor_per_image[:, 3])
+        targets.append(targets_per_image)
 
     return targets
 

@@ -100,4 +100,4 @@ if __name__ == '__main__':
 
     for batch_data in dataloaders['train']:
         batch_images = [data['image'] for data in batch_data]
-        batch_targets = [data['bbox'] for data in batch_data]
+        batch_targets = [data['bboxes'] for data in batch_data]

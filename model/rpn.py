@@ -204,8 +204,9 @@ class RPN(nn.Module):
         bbox_regression_minibatch = [
             bbox_regression[batch_number, indexes, :] for batch_number, indexes in enumerate(samples)
         ]
+
         target_regression_minibatch = [
-            target[batch_number, indexes, :] for batch_number, indexes in enumerate(samples)
+            target[batch_number][indexes] for batch_number, indexes in enumerate(samples)
         ]
 
         # Convert all list of Tensors into Tensors

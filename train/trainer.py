@@ -1,6 +1,3 @@
-import numpy as np
-from dataloader import get_dataloader
-from collections import defaultdict
 from progress.bar import IncrementalBar
 import torch
 import json
@@ -10,19 +7,18 @@ DIR_TO_SAVE_LOGS = 'logs'
 
 
 class ModelTrainer:
-    def __init__(self, model, criterion, optimizer, scheduler, device, df_train, df_val, batch_size):
+    def __init__(self, model, optimizer, scheduler, device, dataloaders):
 
         self.model = model
         self.device = device
         self.model = model.to(device)
-        self.criterion = criterion
         self.optimizer = optimizer
+
         self.scheduler = scheduler
         self.device = device
-        self.batch_size = batch_size
 
         self.losses = {'train': [], 'val': []}
-        self.dataloaders = get_dataloader(df_train, df_val, batch_size=self.batch_size)
+        self.dataloaders = dataloaders
 
         # self.metrics = {'AP': accuracy_score, "BAP": balanced_accuracy_score}
         # self.metrics_values = {
@@ -36,7 +32,6 @@ class ModelTrainer:
     def step(self, phase):
         epoch_loss = 0.0
 
-        # TODO: check syntax
         self.model.train() if phase == 'train' else self.model.eval()
 
         dataloader = self.dataloaders[phase]
@@ -46,9 +41,18 @@ class ModelTrainer:
         for i, batch_data in enumerate(dataloader):
 
             batch_images = [data['image'] for data in batch_data]
-            batch_targets = [data['image'] for data in batch_data]
-            batch_images, batch_targets = torch.tensor(batch_images, dtype=torch.float).to(self.device),\
-                                          torch.tensor(batch_targets, dtype=torch.long).to(self.device)
+            batch_images = torch.stack(batch_images, dim=0).to(self.device)
+
+            # batch_boxes = [torch.Tensor(data['bboxes']).to(self.device) for data in batch_data]
+            # batch_classes = [torch.Tensor(data['class_labels']).to(self.device) for data in batch_data]
+
+            batch_targets = [
+                {
+                    'boxes': torch.Tensor(data['bboxes']).to(self.device),
+                    'labels': torch.Tensor(data['class_labels']).to(self.device)
+                }
+                for data in batch_data
+            ]
 
             with torch.set_grad_enabled(phase == 'train'):
 
@@ -78,7 +82,7 @@ class ModelTrainer:
 
     def train(self, num_epochs):
         state = None
-        bar = IncrementalBar('Countdown', max=len(num_epochs))
+        bar = IncrementalBar('Countdown', max=num_epochs)
 
         for epoch in range(num_epochs):
             bar.next()
@@ -104,3 +108,29 @@ class ModelTrainer:
         # saving last epoch
         print('-' * 10 + str(num_epochs) + 'passed' + '-' * 10)
         torch.save(state, "{}/model_epoch_{}_score_{:.4f}.pth".format(DIR_TO_SAVE_MODELS, num_epochs, 0.1))
+
+
+from model.FasterRCNN import FasterRCNN
+from torch.optim import Adam
+from train.dataloader import ConfigDataset, get_dataloader, DatasetFasterRCNN
+from pathlib import Path
+
+
+if __name__ == '__main__':
+
+    dataloaders = get_dataloader(
+        path_train_csv=Path('../data/annotation.csv'),
+        path_val_csv=Path('../data/annotation2.csv'),
+        shuffle=False, batch_size=2
+    )
+
+    faster_rcnn = FasterRCNN(stage='train')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    optimizer = Adam(faster_rcnn.parameters())
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.9, mode="min", patience=3, verbose=True)
+
+    model_train = ModelTrainer(faster_rcnn, optimizer, scheduler, device, dataloaders)
+    model_train.train(20)
+
+

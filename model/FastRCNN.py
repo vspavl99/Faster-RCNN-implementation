@@ -13,7 +13,7 @@ class FastRCNN(nn.Module):
     def __init__(self, stage: str = 'train'):
         super().__init__()
 
-        self.n_class = 20
+        self.n_class = 21
         self.spatial_scale = 1 / 32
         self.roi_pooling_size = 7
         self.feature_map_size = 512
@@ -86,7 +86,7 @@ class FastRCNN(nn.Module):
 
     @staticmethod
     def loss(features_class: Tensor, features_scores: Tensor, batch_labels: list[Tensor],
-             regression_targets: Tensor) -> tuple:
+             regression_targets: list[Tensor]) -> tuple:
         """
         :param features_class: # TODO:
         :param features_scores:
@@ -101,6 +101,7 @@ class FastRCNN(nn.Module):
         positive_indexes = torch.where(labels > 0)[0]
         labels_pos = labels[positive_indexes]
 
+        regression_targets = torch.cat(regression_targets, dim=0)
         regression_targets = regression_targets.reshape(-1, 4)
         regression_targets_positive = regression_targets[positive_indexes]
 
@@ -142,7 +143,7 @@ class FastRCNN(nn.Module):
 
             if gt_boxes_per_batch.numel() == 0:
                 gt_boxes_per_batch = torch.zeros((1, 4), dtype=dtype, device=device)
-            matched_gt_bboxes.append(gt_boxes_per_batch[matched_indexes_per_batch])
+            matched_gt_bboxes.append(gt_boxes_per_batch[matched_indexes_per_batch[sample_indexes_per_batch]])
 
         return labels, proposals, matched_gt_bboxes, matched_indexes
 

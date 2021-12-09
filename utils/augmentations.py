@@ -3,7 +3,7 @@ from albumentations.pytorch.transforms import ToTensorV2
 
 from albumentations import Resize, ShiftScaleRotate, HorizontalFlip, \
     ElasticTransform, GridDistortion, CoarseDropout, CLAHE, RandomBrightnessContrast, \
-    RandomGamma, IAASharpen, Blur, MotionBlur, OneOf, Compose, BboxParams
+    RandomGamma, IAASharpen, Blur, MotionBlur, OneOf, Compose, BboxParams,Normalize
 
 
 def get_augmentations(phase: str, image_shape: tuple) -> Compose:
@@ -48,7 +48,7 @@ def get_augmentations(phase: str, image_shape: tuple) -> Compose:
     list_transforms.extend(
         [
             Resize(image_shape[0], image_shape[1]),
-            # Normalize(mean=(69.0932, 69.3587, 68.9373), std=(48.4471, 48.4580, 48.,4263)),
+            Normalize(),
             ToTensorV2()
         ]
     )
