@@ -11,15 +11,16 @@ from torch import Tensor
 from utils.bbox_matcher import BBoxMatcher
 from utils.sampler import Sampler
 from utils.bbox import get_proposals_from_bbox_regression, get_target_shift
+from typing import List, Tuple
 
 
 class RPN(nn.Module):
-    def __init__(self, stage: str = 'train'):
+    def __init__(self):
         super(RPN, self).__init__()
 
         # Anchors parameters
-        self.anchors_sizes = (32,)
-        self.aspect_ratios = ((1.0,),)
+        self.anchors_sizes = (32, 64, 128)
+        self.aspect_ratios = ((1.0, 0.5, 1.5),)
         self.anchors_number = len(self.anchors_sizes) * len(self.aspect_ratios)
         self.anchor_generator = AnchorGenerator(sizes=(self.anchors_sizes,), aspect_ratios=(self.aspect_ratios,))
 
@@ -47,14 +48,13 @@ class RPN(nn.Module):
         # FilterProposals
         self.min_boxes_size = 1e-3
         self.min_box_score = 0.0
-        self.post_nms_top_n_proposal = 500
-        self.pre_nms_top_n_proposal = 500
+        self.post_nms_top_n_proposal = 2000
+        self.pre_nms_top_n_proposal = 2000
         self.nms_threshold = 0.7
         self.image_size = (800, 800)
 
         # Training
-        self.training = True if stage == 'train' else False
-        self.bbox_matcher = BBoxMatcher(0.1, 0.01)
+        self.bbox_matcher = BBoxMatcher(0.3, 0.7)
         self.sampler = Sampler()
 
     def filter_proposals(self, proposals, object_score):
@@ -103,7 +103,7 @@ class RPN(nn.Module):
         return final_proposals, final_score
 
     def assign_targets_to_anchors(
-            self, batch_anchors: list[Tensor], batch_ground_true_bboxes: list[Tensor]) -> tuple[list, list]:
+            self, batch_anchors: List[Tensor], batch_ground_true_bboxes: List[Tensor]) -> Tuple[List, List]:
         """
         For every proposals find ground_true_bboxes with highest IoU. And assigns labels them
         :param batch_anchors: batch of anchors
@@ -116,18 +116,26 @@ class RPN(nn.Module):
         batch_labels = []
 
         for anchors, ground_true_bboxes in zip(batch_anchors, batch_ground_true_bboxes):
-            matched_indexes = self.bbox_matcher.match(anchors, ground_true_bboxes)
 
-            # Set 0 ground_true index for proposals with low IoU
-            matched_gt_bboxes_to_anchors = ground_true_bboxes[matched_indexes.clamp(min=0)]
+            if ground_true_bboxes.numel() == 0:
+                # Background image (negative example)
+                device = anchors.device
+                matched_gt_bboxes_to_anchors = torch.zeros(anchors.shape, dtype=torch.float32, device=device)
+                labels = torch.zeros((anchors.shape[0],), dtype=torch.float32, device=device)
+            else:
 
-            labels = (matched_indexes >= 0).to(dtype=torch.float32)
+                matched_indexes = self.bbox_matcher.match(anchors, ground_true_bboxes)
 
-            # Negative examples
-            labels[matched_indexes == self.bbox_matcher.LOW_MARKER] = 0
+                # Set 0 ground_true index for proposals with low IoU
+                matched_gt_bboxes_to_anchors = ground_true_bboxes[matched_indexes.clamp(min=0)]
 
-            # Between proposals
-            labels[matched_indexes == self.bbox_matcher.BETWEEN_MARKER] = -1
+                labels = (matched_indexes >= 0).to(dtype=torch.float32)
+
+                # Negative examples
+                labels[matched_indexes == self.bbox_matcher.LOW_MARKER] = 0
+
+                # Between proposals
+                labels[matched_indexes == self.bbox_matcher.BETWEEN_MARKER] = -1
 
             batch_labels.append(labels)
             batch_matched_gt_bboxes_to_anchors.append(matched_gt_bboxes_to_anchors)
@@ -140,6 +148,8 @@ class RPN(nn.Module):
 
         # Feed feature_map into Conv2d and ReLU
         feature_map = self.common_feature_extractor(feature_map)
+
+        # feature_map = torch.randn((batch_images.shape[0], 512, 25, 25))
 
         # Feed feature_map into two branches for bbox_regression and object_score
         # [Batch_size, self.anchors_number * k, w, h]
@@ -173,7 +183,7 @@ class RPN(nn.Module):
 
         return feature_map, filtered_proposals, losses
 
-    def loss(self, target: Tensor, labels: list[Tensor], object_score: Tensor, bbox_regression: Tensor) -> tuple:
+    def loss(self, target: Tensor, labels: List[Tensor], object_score: Tensor, bbox_regression: Tensor) -> Tuple:
         """
         Take mini-batch of anchors and compute loss for them
         :param target:
@@ -184,14 +194,6 @@ class RPN(nn.Module):
         """
         batch_size = len(object_score)
         positive_samples, negative_samples, samples = self.sampler.create_minibatch(labels)
-
-        # TODO: choose implementation
-        # flatten indexes per all batch in flatten
-        # sampled_pos_inds = torch.where(torch.cat(positive_samples, dim=0))[0]
-        # sampled_neg_inds = torch.where(torch.cat(negative_samples, dim=0))[0]
-        # sampled_inds = torch.cat([sampled_pos_inds, sampled_neg_inds], dim=0) # flatten indexes
-        # objectness = object_score.flatten()
-        # tmp3 = objectness[sampled_inds]
 
         #  samples = indexes per every batch
         object_score_minibatch = [
@@ -217,14 +219,17 @@ class RPN(nn.Module):
         bbox_regression_minibatch = torch.cat(bbox_regression_minibatch, dim=0)
 
         box_loss = F.smooth_l1_loss(
-            bbox_regression_minibatch, target_regression_minibatch, reduction='sum'
+            bbox_regression_minibatch, target_regression_minibatch, reduction='mean'
         )
+
+        if box_loss.item() > 10:
+            print(box_loss)
 
         objectness_loss = F.binary_cross_entropy_with_logits(
             object_score_minibatch, labels_minibatch, reduction='mean'
         )
 
-        return box_loss, objectness_loss
+        return objectness_loss, box_loss
 
 
 if __name__ == '__main__':

@@ -1,12 +1,12 @@
 import torch
 from torch import Tensor
-
+from typing import List, Tuple
 
 class Sampler:
     def __init__(self, mini_batch_size: int = 256):
         self.mini_batch_size = mini_batch_size
 
-    def create_minibatch(self, batch_labels: list[Tensor]) -> tuple[list[Tensor], list[Tensor], ...]:
+    def create_minibatch(self, batch_labels: List[Tensor]):
         """
          Take mini_batch_size elements from labels, and create minibatch of them
         :param batch_labels: list of Tensor with -1, 0 or index of gt_box (positive value)

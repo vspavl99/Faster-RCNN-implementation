@@ -1,30 +1,33 @@
 import torch
 from torch import nn
+from torch import Tensor
 from model.FastRCNN import FastRCNN
 from model.rpn import RPN
+from typing import Dict, List
 
 
 class FasterRCNN(nn.Module):
-    def __init__(self, stage: str = 'train'):
+    def __init__(self):
         super(FasterRCNN, self).__init__()
 
-        self.rpn = RPN(stage=stage)
-        self.fast_rcnn = FastRCNN(stage=stage)
+        self.rpn = RPN()
+        self.fast_rcnn = FastRCNN()
 
-        self.training = True if stage == 'train' else False
-
-    def forward(self, batch_input, batch_targets=None):
+    def forward(self, batch_input: Tensor, batch_targets: List[Dict] = None):
         batch_gt_boxes = None
         losses = {}
 
         if self.training:
             assert batch_targets is not None
-            batch_gt_boxes = [t["boxes"] for t in batch_targets]
+            batch_gt_boxes = [target["boxes"] for target in batch_targets]
 
         features, roi, losses_rpn = self.rpn(batch_input, batch_gt_boxes)
         result, losses_fastrcnn = self.fast_rcnn(features, roi, batch_targets)
+
         losses.update(losses_rpn)
         losses.update(losses_fastrcnn)
+        if not self.training:
+            return result
 
         return result, losses
 

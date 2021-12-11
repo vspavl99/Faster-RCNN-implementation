@@ -10,21 +10,19 @@ def draw(proposals, ground_true_bboxes):
     import torch
     import cv2
     import numpy as np
-    dummy_image = np.array(torch.ones(800, 800, 3, dtype=torch.uint8))
-
+    dummy_image = np.array(torch.ones(224, 224, 3, dtype=torch.uint8))
 
     for i, anchor in enumerate(proposals[0]):
         x1, y1, x2, y2 = int(anchor[0].item()), int(anchor[1].item()), int(anchor[2].item()), int(anchor[3].item())
-        print(x1, y1, x2, y2)
+        # print(x1, y1, x2, y2)
 
-        image = cv2.rectangle(img=dummy_image, pt1=(x1, y1), pt2=(x2, y2), color=(255, 0, 255))
+        dummy_image = cv2.rectangle(img=dummy_image, pt1=(x1, y1), pt2=(x2, y2), color=(255, 0, 255))
         # break
-
     for i, anchor in enumerate(ground_true_bboxes[0]):
         x1, y1, x2, y2 = int(anchor[0].item()), int(anchor[1].item()), int(anchor[2].item()), int(anchor[3].item())
-        print(x1, y1, x2, y2)
+        # print(x1, y1, x2, y2)
 
-        image = cv2.rectangle(img=dummy_image, pt1=(x1, y1), pt2=(x2, y2), color=(0, 255, 0))
+        dummy_image = cv2.rectangle(img=dummy_image, pt1=(x1, y1), pt2=(x2, y2), color=(0, 255, 0))
         # break
 
     import matplotlib.pyplot as plt
@@ -89,12 +87,13 @@ def train_rpn():
     optimizer = torch.optim.Adam(rpn.parameters())
 
     for i in range(100):
-        dummy_input = torch.ones((2, 3, 800, 800))
+        dummy_input = torch.ones((2, 3, 224, 224))
 
-        feature_map, proposals, loss_object_score, loss_bbox = rpn(
+        feature_map, proposals, loss = rpn(
             dummy_input, torch.tensor([[[50, 50, 150, 150]], [[50, 50, 150, 150]]])
         )
-        loss = loss_object_score + loss_bbox
+        print(loss)
+        loss = sum(value for key, value in loss.items())
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -105,28 +104,29 @@ def train_rpn():
 
 
 if __name__ == '__main__':
-    anchor_generator = AnchorGenerator(
-        sizes=((32, 64),),
-        aspect_ratios=(1., 0.5)
-    )
-
-    # anchor_generator
-    dummy_image = read_image()
-    output = backbone(dummy_image)
-    print(output.shape)
-
-    anchors = anchor_generator(
-        ImageList(dummy_image, [image.shape for image in dummy_image]),
-        output)
-
-    image = (dummy_image.squeeze(0).permute(1, 2, 0) * 255).type(torch.uint8).numpy()
-    for i, anchor in enumerate(anchors[0]):
-        x1, y1, x2, y2 = int(anchor[0].item()), int(anchor[1].item()), int(anchor[2].item()), int(anchor[3].item())
-        print(x1, y1, x2, y2)
-
-        image = cv2.rectangle(img=image, pt1=(x1, y1), pt2=(x2, y2), color=(255, 0, 255))
-        # break
-
-    import matplotlib.pyplot as plt
-    plt.imshow(image)
-    plt.show()
+    # anchor_generator = AnchorGenerator(
+    #     sizes=((32, 64),),
+    #     aspect_ratios=(1., 0.5)
+    # )
+    #
+    # # anchor_generator
+    # dummy_image = read_image()
+    # output = backbone(dummy_image)
+    # print(output.shape)
+    #
+    # anchors = anchor_generator(
+    #     ImageList(dummy_image, [image.shape for image in dummy_image]),
+    #     output)
+    #
+    # image = (dummy_image.squeeze(0).permute(1, 2, 0) * 255).type(torch.uint8).numpy()
+    # for i, anchor in enumerate(anchors[0]):
+    #     x1, y1, x2, y2 = int(anchor[0].item()), int(anchor[1].item()), int(anchor[2].item()), int(anchor[3].item())
+    #     print(x1, y1, x2, y2)
+    #
+    #     image = cv2.rectangle(img=image, pt1=(x1, y1), pt2=(x2, y2), color=(255, 0, 255))
+    #     # break
+    #
+    # import matplotlib.pyplot as plt
+    # plt.imshow(image)
+    # plt.show()
+    train_rpn()

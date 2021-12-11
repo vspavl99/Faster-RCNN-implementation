@@ -3,6 +3,7 @@ from torch import Tensor
 from torchvision.ops import box_convert
 from typing import List
 
+
 def get_target_shift(bboxes, anchors) -> List[Tensor]:
     """
     Calculate and return target shift for each proposals
@@ -37,12 +38,15 @@ def get_target_shift(bboxes, anchors) -> List[Tensor]:
         targets_per_image[:, 1] = (boxes_per_image[:, 1] - anchor_per_image[:, 1]) / anchor_per_image[:, 3]
         targets_per_image[:, 2] = torch.log(boxes_per_image[:, 2] / anchor_per_image[:, 2])
         targets_per_image[:, 3] = torch.log(boxes_per_image[:, 3] / anchor_per_image[:, 3])
+
+        assert torch.isinf(targets_per_image).sum() == 0
+
         targets.append(targets_per_image)
 
     return targets
 
 
-def get_proposals_from_bbox_regression(bbox_shifts: Tensor, bbox: list[Tensor]) -> Tensor:
+def get_proposals_from_bbox_regression(bbox_shifts: Tensor, bbox: List[Tensor]) -> Tensor:
     """
     Generate proposals from bbox and their shifts.
     :param bbox_shifts: [batch_size, w * h * anchors_number, 4] (XcYcWH)
@@ -50,27 +54,37 @@ def get_proposals_from_bbox_regression(bbox_shifts: Tensor, bbox: list[Tensor]) 
     :return: torch.Tensor
     """
 
-    bbox = torch.stack(bbox, dim=0)
+    batch_size = None
+    if len(bbox_shifts.shape) == 3:
+        batch_size = bbox_shifts.shape[0]
 
-    assert bbox.shape == bbox_shifts.shape
+    bbox_shifts = bbox_shifts.reshape(-1, bbox_shifts.shape[-1])
+    bbox = torch.cat(bbox, dim=0)
 
-    x_shift = bbox_shifts[:, :, 0]
-    y_shift = bbox_shifts[:, :, 1]
-    width_shift = bbox_shifts[:, :, 2]
-    height_shift = bbox_shifts[:, :, 3]
+    x_shift = bbox_shifts[:, 0::4]
+    y_shift = bbox_shifts[:, 1::4]
+    width_shift = bbox_shifts[:, 2::4]
+    height_shift = bbox_shifts[:, 3::4]
 
-    bbox_width = bbox[:, :, 2] - bbox[:, :, 0]
-    bbox_height = bbox[:, :, 3] - bbox[:, :, 1]
-    bbox_center_x = bbox[:, :, 0] + 0.5 * bbox_width
-    bbox_center_y = bbox[:, :, 1] + 0.5 * bbox_height
+    bbox_width = bbox[:, 2] - bbox[:, 0]
+    bbox_height = bbox[:, 3] - bbox[:, 1]
+    bbox_center_x = bbox[:, 0] + 0.5 * bbox_width
+    bbox_center_y = bbox[:, 1] + 0.5 * bbox_height
 
-    proposals = torch.empty_like(bbox_shifts)
+    proposals_x = bbox_width[:, None] * x_shift + bbox_center_x[:, None]
+    proposals_y = bbox_height[:, None] * y_shift + bbox_center_y[:, None]
+    proposals_w = torch.exp(width_shift) * bbox_width[:, None]
+    proposals_h = torch.exp(height_shift) * bbox_height[:, None]
 
-    proposals[:, :, 0] = bbox_width * x_shift + bbox_center_x
-    proposals[:, :, 1] = bbox_height * y_shift + bbox_center_y
-    proposals[:, :, 2] = torch.exp(width_shift) * bbox_width
-    proposals[:, :, 3] = torch.exp(height_shift) * bbox_height
+    proposals = torch.stack((proposals_x, proposals_y, proposals_w, proposals_h), dim=2).flatten(1)
 
-    proposals = box_convert(proposals, 'cxcywh', out_fmt='xyxy')
+    if proposals.shape[-1] == 4:
+        proposals = box_convert(proposals, 'cxcywh', out_fmt='xyxy')
+    else:
+        proposals = box_convert(proposals.reshape(proposals.shape[0], -1, 4), 'cxcywh', out_fmt='xyxy')
+        # proposals = proposals.reshape(proposals.shape[0], -1)
+
+    if batch_size is not None:
+        proposals = proposals.reshape(batch_size, -1, 4)
 
     return proposals
